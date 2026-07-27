@@ -1,0 +1,47 @@
+services:
+  catalog-service:
+    build:
+      context: ./catalog-service
+    container_name: catalog-service
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  reservation-service:
+    build:
+      context: ./reservation-service
+    container_name: reservation-service
+    ports:
+      - "3002:3000"
+    depends_on:
+      catalog-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  reservation-sidecar:
+    build:
+      context: ./reservation-sidecar
+    container_name: reservation-sidecar
+    environment:
+      - UPSTREAM_URL=http://reservation-service:3000
+    ports:
+      - "3003:3000"
+    depends_on:
+      reservation-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

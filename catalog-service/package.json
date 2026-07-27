@@ -1,0 +1,12 @@
+{
+  "name": "catalog-service",
+  "version": "1.0.0",
+  "description": "Simulated catalog service for ShareCast",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
