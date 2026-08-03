@@ -1,0 +1,11 @@
+:80 {
+	# Load balance across the three catalog-service replicas. Active health
+	# checks poll /health on each upstream so a stopped replica is taken out
+	# of rotation automatically instead of returning errors to clients.
+	reverse_proxy catalog-service-1:3000 catalog-service-2:3000 catalog-service-3:3000 {
+		lb_policy round_robin
+		health_uri /health
+		health_interval 10s
+		health_timeout 3s
+	}
+}

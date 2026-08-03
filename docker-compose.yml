@@ -1,16 +1,90 @@
 services:
-  catalog-service:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Three named replicas of catalog-service (same image/build, different
+  # INSTANCE_ID) sit behind Caddy's load balancer. Named services are used
+  # instead of `deploy.replicas` so Caddy can address each upstream by a
+  # stable hostname.
+  catalog-service-1:
     build:
       context: ./catalog-service
-    container_name: catalog-service
+    container_name: catalog-service-1
+    environment:
+      - INSTANCE_ID=catalog-1
+      - REDIS_URL=redis://redis:6379
     ports:
       - "3001:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
+
+  catalog-service-2:
+    build:
+      context: ./catalog-service
+    container_name: catalog-service-2
+    environment:
+      - INSTANCE_ID=catalog-2
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "3004:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  catalog-service-3:
+    build:
+      context: ./catalog-service
+    container_name: catalog-service-3
+    environment:
+      - INSTANCE_ID=catalog-3
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "3005:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Load balancer in front of the catalog-service replicas.
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    ports:
+      - "8090:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      catalog-service-1:
+        condition: service_healthy
+      catalog-service-2:
+        condition: service_healthy
+      catalog-service-3:
+        condition: service_healthy
 
   reservation-service:
     build:
@@ -19,7 +93,7 @@ services:
     ports:
       - "3002:3000"
     depends_on:
-      catalog-service:
+      catalog-service-1:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
@@ -45,3 +119,4 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+

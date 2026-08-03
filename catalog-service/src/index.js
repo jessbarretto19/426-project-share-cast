@@ -1,7 +1,32 @@
 const express = require("express");
+const os = require("os");
+const { createClient } = require("redis");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const instanceId = process.env.INSTANCE_ID || os.hostname();
+
+// Cache entries expire quickly on purpose: with only a handful of catalog
+// items, a short TTL keeps repeated lookups mostly cache hits while still
+// forcing periodic misses, so a load test never sees a flat 0%/100% rate.
+const CACHE_TTL_SECONDS = 2;
+
+const redisUrl = process.env.REDIS_URL || "redis://redis:6379";
+const redisClient = createClient({ url: redisUrl });
+redisClient.on("error", (err) => {
+  console.error(JSON.stringify({ service: "catalog-service", instanceId, error: `redis: ${err.message}` }));
+});
+
+let redisReady = false;
+redisClient
+  .connect()
+  .then(() => {
+    redisReady = true;
+    console.log(JSON.stringify({ service: "catalog-service", instanceId, message: "connected to redis" }));
+  })
+  .catch((err) => {
+    console.error(JSON.stringify({ service: "catalog-service", instanceId, error: `redis connect failed: ${err.message}` }));
+  });
 
 const inventory = [
   {
@@ -35,7 +60,7 @@ const inventory = [
 ];
 
 app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok", service: "catalog-service" });
+  res.status(200).json({ status: "ok", service: "catalog-service", instanceId });
 });
 
 app.get("/items", (_req, res) => {
@@ -44,26 +69,55 @@ app.get("/items", (_req, res) => {
     res.json({
       generatedAt: new Date().toISOString(),
       totalItems: inventory.length,
+      instanceId,
       items: inventory
     });
   }, 650);
 });
 
-app.get("/items/:itemId", (req, res) => {
-  const item = inventory.find((entry) => entry.itemId === req.params.itemId.toUpperCase());
+app.get("/items/:itemId", async (req, res) => {
+  const itemId = req.params.itemId.toUpperCase();
+  const cacheKey = `item:${itemId}`;
 
-  setTimeout(() => {
+  if (redisReady) {
+    try {
+      const cached = await redisClient.get(cacheKey);
+      if (cached) {
+        console.log(JSON.stringify({ service: "catalog-service", instanceId, itemId, cache: "HIT" }));
+        return res.json({ ...JSON.parse(cached), instanceId, cache: "HIT" });
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ service: "catalog-service", instanceId, error: `redis get failed: ${err.message}` }));
+    }
+  }
+
+  const item = inventory.find((entry) => entry.itemId === itemId);
+
+  // Simulates the latency of fetching from a backing store on a cache miss.
+  setTimeout(async () => {
+    console.log(JSON.stringify({ service: "catalog-service", instanceId, itemId, cache: "MISS" }));
+
     if (!item) {
       return res.status(404).json({
         error: "Item not found",
-        itemId: req.params.itemId
+        itemId: req.params.itemId,
+        instanceId,
+        cache: "MISS"
       });
     }
 
-    return res.json(item);
+    if (redisReady) {
+      try {
+        await redisClient.set(cacheKey, JSON.stringify(item), { EX: CACHE_TTL_SECONDS });
+      } catch (err) {
+        console.error(JSON.stringify({ service: "catalog-service", instanceId, error: `redis set failed: ${err.message}` }));
+      }
+    }
+
+    return res.json({ ...item, instanceId, cache: "MISS" });
   }, 250);
 });
 
 app.listen(port, () => {
-  console.log(`catalog-service listening on port ${port}`);
+  console.log(`catalog-service (${instanceId}) listening on port ${port}`);
 });
